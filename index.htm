@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Welcome to Resolute</title>
+
+    <!-- Bootstrap CSS -->
+    <!--  <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap.min.css">-->
+    <link rel="stylesheet" type="text/css" href="custom.css">
+    <link rel="stylesheet" href="css/prettyPhoto.css" type="text/css" media="screen" charset="utf-8" />
+    <link rel="stylesheet" type="text/css" href="css/style.css">
+    <!-- <link rel="stylesheet" type="text/css" href="css/main.css"> -->
+    <!-- <link rel="stylesheet" href="node_modules\animate.css\animate.min.css"> -->
+   <script src="js/createjs-2015.11.26.min.js"></script>
+    <script src="js/rolling_logo6.js"></script>
+    <script src="node_modules/d3/d3.min.js"></script>
+    <script src="node_modules/topojson/dist/topojson.min.js"></script>
+    <script src="node_modules/planetary.js/dist/planetaryjs.js"></script>
+  
+    <script>
+        var canvas, stage, exportRoot, anim_container, dom_overlay_container, fnStartAnimation;
+        function init() {
+            canvas = document.getElementById("canvas");
+            anim_container = document.getElementById("animation_container");
+            dom_overlay_container = document.getElementById("dom_overlay_container");
+            var comp=AdobeAn.getComposition("FC73C71A91CB6E41B4460BBD0873C4F8");
+            var lib=comp.getLibrary();
+            var loader = new createjs.LoadQueue(false);
+            loader.addEventListener("fileload", function(evt){handleFileLoad(evt,comp)});
+            loader.addEventListener("complete", function(evt){handleComplete(evt,comp)});
+            var lib=comp.getLibrary();
+            loader.loadManifest(lib.properties.manifest);
+        }
+        function handleFileLoad(evt, comp) {
+            var images=comp.getImages();	
+            if (evt && (evt.item.type == "image")) { images[evt.item.id] = evt.result; }	
+        }
+        function handleComplete(evt,comp) {
+            //This function is always called, irrespective of the content. You can use the variable "stage" after it is created in token create_stage.
+            var lib=comp.getLibrary();
+            var ss=comp.getSpriteSheet();
+            var queue = evt.target;
+            var ssMetadata = lib.ssMetadata;
+            for(i=0; i<ssMetadata.length; i++) {
+                ss[ssMetadata[i].name] = new createjs.SpriteSheet( {"images": [queue.getResult(ssMetadata[i].name)], "frames": ssMetadata[i].frames} )
+            }
+            exportRoot = new lib.rolling_logo6();
+            stage = new lib.Stage(canvas);	
+            //Registers the "tick" event listener.
+            fnStartAnimation = function() {
+                stage.addChild(exportRoot);
+                createjs.Ticker.setFPS(lib.properties.fps);
+                createjs.Ticker.addEventListener("tick", stage)
+                stage.addEventListener("tick", handleTick)
+                function getProjectionMatrix(container, totalDepth) {
+                    var focalLength = 528.25;
+                    var projectionCenter = { x : lib.properties.width/2, y : lib.properties.height/2 };
+                    var scale = (totalDepth + focalLength)/focalLength;
+                    var scaleMat = new createjs.Matrix2D;
+                    scaleMat.a = 1/scale;
+                    scaleMat.d = 1/scale;
+                    var projMat = new createjs.Matrix2D;
+                    projMat.tx = -projectionCenter.x;
+                    projMat.ty = -projectionCenter.y;
+                    projMat = projMat.prependMatrix(scaleMat);
+                    projMat.tx += projectionCenter.x;
+                    projMat.ty += projectionCenter.y;
+                    return projMat;
+                }
+                function handleTick(event) {
+                    var cameraInstance = exportRoot.___camera___instance;
+                    if(cameraInstance !== undefined && cameraInstance.pinToObject !== undefined)
+                    {
+                        cameraInstance.x = cameraInstance.pinToObject.x + cameraInstance.pinToObject.pinOffsetX;
+                        cameraInstance.y = cameraInstance.pinToObject.y + cameraInstance.pinToObject.pinOffsetY;
+                        if(cameraInstance.pinToObject.parent !== undefined && cameraInstance.pinToObject.parent.depth !== undefined)
+                        cameraInstance.depth = cameraInstance.pinToObject.parent.depth + cameraInstance.pinToObject.pinOffsetZ;
+                    }
+                    applyLayerZDepth(exportRoot);
+                }
+                function applyLayerZDepth(parent)
+                {
+                    var cameraInstance = parent.___camera___instance;
+                    var focalLength = 528.25;
+                    var projectionCenter = { 'x' : 0, 'y' : 0};
+                    if(parent === exportRoot)
+                    {
+                        var stageCenter = { 'x' : lib.properties.width/2, 'y' : lib.properties.height/2 };
+                        projectionCenter.x = stageCenter.x;
+                        projectionCenter.y = stageCenter.y;
+                    }
+                    for(child in parent.children)
+                    {
+                        var layerObj = parent.children[child];
+                        if(layerObj == cameraInstance)
+                            continue;
+                        applyLayerZDepth(layerObj, cameraInstance);
+                        if(layerObj.layerDepth === undefined)
+                            continue;
+                        if(layerObj.currentFrame != layerObj.parent.currentFrame)
+                        {
+                            layerObj.gotoAndPlay(layerObj.parent.currentFrame);
+                        }
+                        var matToApply = new createjs.Matrix2D;
+                        var cameraMat = new createjs.Matrix2D;
+                        var totalDepth = layerObj.layerDepth ? layerObj.layerDepth : 0;
+                        var cameraDepth = 0;
+                        if(cameraInstance && !layerObj.isAttachedToCamera)
+                        {
+                            var mat = cameraInstance.getMatrix();
+                            mat.tx -= projectionCenter.x;
+                            mat.ty -= projectionCenter.y;
+                            cameraMat = mat.invert();
+                            cameraMat.prependTransform(projectionCenter.x, projectionCenter.y, 1, 1, 0, 0, 0, 0, 0);
+                            cameraMat.appendTransform(-projectionCenter.x, -projectionCenter.y, 1, 1, 0, 0, 0, 0, 0);
+                            if(cameraInstance.depth)
+                                cameraDepth = cameraInstance.depth;
+                        }
+                        if(layerObj.depth)
+                        {
+                            totalDepth = layerObj.depth;
+                        }
+                        //Offset by camera depth
+                        totalDepth -= cameraDepth;
+                        if(totalDepth < -focalLength)
+                        {
+                            matToApply.a = 0;
+                            matToApply.d = 0;
+                        }
+                        else
+                        {
+                            if(layerObj.layerDepth)
+                            {
+                                var sizeLockedMat = getProjectionMatrix(parent, layerObj.layerDepth);
+                                if(sizeLockedMat)
+                                {
+                                    sizeLockedMat.invert();
+                                    matToApply.prependMatrix(sizeLockedMat);
+                                }
+                            }
+                            matToApply.prependMatrix(cameraMat);
+                            var projMat = getProjectionMatrix(parent, totalDepth);
+                            if(projMat)
+                            {
+                                matToApply.prependMatrix(projMat);
+                            }
+                        }
+                        layerObj.transformMatrix = matToApply;
+                    }
+                }
+            }	    
+            //Code to support hidpi screens and responsive scaling.
+            function makeResponsive(isResp, respDim, isScale, scaleType) {		
+                var lastW, lastH, lastS=1;		
+                window.addEventListener('resize', resizeCanvas);		
+                resizeCanvas();		
+                function resizeCanvas() {			
+                    var w = lib.properties.width, h = lib.properties.height;			
+                    var iw = window.innerWidth, ih=window.innerHeight;			
+                    var pRatio = window.devicePixelRatio || 1, xRatio=iw/w, yRatio=ih/h, sRatio=1;			
+                    if(isResp) {                
+                        if((respDim=='width'&&lastW==iw) || (respDim=='height'&&lastH==ih)) {                    
+                            sRatio = lastS;                
+                        }				
+                        else if(!isScale) {					
+                            if(iw<w || ih<h)						
+                                sRatio = Math.min(xRatio, yRatio);				
+                        }				
+                        else if(scaleType==1) {					
+                            sRatio = Math.min(xRatio, yRatio);				
+                        }				
+                        else if(scaleType==2) {					
+                            sRatio = Math.max(xRatio, yRatio);				
+                        }			
+                    }			
+                    canvas.width = w*pRatio*sRatio;			
+                    canvas.height = h*pRatio*sRatio;
+                    canvas.style.width = dom_overlay_container.style.width = anim_container.style.width =  w*sRatio+'px';				
+                    canvas.style.height = anim_container.style.height = dom_overlay_container.style.height = h*sRatio+'px';
+                    stage.scaleX = pRatio*sRatio;			
+                    stage.scaleY = pRatio*sRatio;			
+                    lastW = iw; lastH = ih; lastS = sRatio;            
+                    stage.tickOnUpdate = false;            
+                    stage.update();            
+                    stage.tickOnUpdate = true;		
+                }
+            }
+            makeResponsive(true,'both',false,1);	
+            AdobeAn.compositionLoaded(lib.properties.id);
+            fnStartAnimation();
+        }
+        </script>
+</head> 
+
+<body id="page-top"  onload="init();" data-spy="scroll" data-target="#navid" data-offset="250"> 
+
+     <!--    <div id="preloader">
+                <div id="status"> <img src="img/preloader.gif" height="64" width="64" alt="loading..."> </div>
+            </div> -->
+    <!-- Navigation -->
+    <nav id="navid" class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#page-top">
+                <svg id="logo" version="1.1" viewBox="0 0 1031.8 340.12" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+                    <defs id="defs">
+                        <linearGradient id="rect-blk-grad" x1="291.55" x2="291.55" y1="700.77" y2="1025.5"
+                            gradientTransform="matrix(1 0 0 .98098 2.309 -679.8)" gradientUnits="userSpaceOnUse"
+                            xlink:href="#path4980-5-3_1_" />
+                        <linearGradient id="trans-blk-grad" x1="-10628" x2="-10628" y1="123.83" y2="203.67"
+                            gradientUnits="userSpaceOnUse" xlink:href="#path4980-5-3_1_" />
+                        <linearGradient id="trans-blk-grad-stroke" x1="-10846" x2="-10789" y1="163.3" y2="163.3"
+                            gradientUnits="userSpaceOnUse" spreadMethod="repeat" xlink:href="#path4980-5-3_1_" />
+                        <linearGradient id="linearGradient4565" x1="291.55" x2="291.55" y1="700.77" y2="1025.5"
+                            gradientTransform="matrix(1 0 0 .98098 2.309 -679.8)" gradientUnits="userSpaceOnUse"
+                            xlink:href="#trans-slvr-grad" />
+                        <linearGradient id="linearGradient4569" x1="-6547.6" x2="-6547.6" y1="-1482.5" y2="-860.77"
+                            gradientTransform="matrix(.1194 0 0 -.1194 -10035 23.49)" gradientUnits="userSpaceOnUse"
+                            xlink:href="#trans-slvr-grad" />
+                    </defs>
+                    <style />
+                    <!-- <rect id="rect-blk" x="5" y="5" width="1021.8" height="323.84" ry="80.081" fill="url(#rect-blk-grad)" stroke-width=".99"/> -->
+          
+                    <g id="transportation" transform="translate(10896 81.43)">
+                     <linearGradient id="trans-slvr-grad" x1="-6552.7" x2="-5948.8" y1="-4656.2" y2="-4656.2" gradientTransform="matrix(.1008 0 0 -.1008 -10188 -307.84)" gradientUnits="userSpaceOnUse" spreadMethod="repeat">
+                      <stop stop-color="#696969" offset="0"/>
+                      <stop stop-color="#c7c7c9" offset=".195"/>
+                      <stop stop-color="#f9f9ff" offset=".454"/>
+                      <stop stop-color="#ccccce" offset=".837"/>
+                      <stop stop-color="#696969" offset="1"/>
+                     </linearGradient>
+                     <linearGradient id="trans-purp-grad" x1="-6547.6" x2="-6547.6" y1="-1482.5" y2="-824.64" gradientTransform="matrix(.1194 0 0 -.1194 -10035 23.49)" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#09000f" offset="0"/>
+                      <stop stop-color="#26003c" offset=".15207"/>
+                      <stop stop-color="#39005a" offset=".624"/>
+                      <stop stop-color="#350053" offset=".76855"/>
+                      <stop stop-color="#28003f" offset=".86036"/>
+                      <stop stop-color="#14001f" offset=".93582"/>
+                      <stop offset="1"/>
+                     </linearGradient>
+                     <path id="trans-blk" d="m-10528 122.5c-8.7 0-15.7 2.4-20.8 7.2-5.1 4.9-7.6 10.8-7.6 17.8s2.1 12.3 6.4 15.9c4.2 3.6 11.4 6.4 21.5 8.5 5.4 1.1 9.001 2.3 10.901 3.6s2.799 3.1 2.799 5.4-1 4.2-3.1 5.9c-2.1 1.6-5.3 2.4-9.5 2.4-8.8 0-14.2-3.7-16.1-11.1l-17.099 3.9c1.8 7.2 5.499 12.7 11.199 16.4s12.599 5.5 20.699 5.5c10.8 0 18.901-2.6 24.401-7.8s8.3-11.4 8.3-18.5c0-4.5-1.3-8.6-3.9-12.3-2.5-3.7-5.7-6.3-9.4-8-3.7-1.6-9.6-3.3-17.7-4.9-4.8-1-7.9-2.1-9.3-3.4-1.3-1.3-2-2.9-2-4.8 0-4.7 3.7-7.1 11-7.1 6.9 0 11.4 3.1 13.5 9.4l15.701-5.3c-4.4-12.4-14.401-18.6-29.901-18.7zm145.9 0.1c-10.9 0-19.301 3.9-25.201 11.6s-8.901 17.3-8.901 28.9c0 11.3 2.901 21 8.701 29s14.1 12 24.7 12c11.1 0 19.6-3.9 25.3-11.8 5.8-7.9 8.7-17.5 8.7-29 0-10.6-2.8-20-8.5-28.2-5.4-8.3-13.699-12.5-24.799-12.5zm364.6 0c-10.9 0-19.301 3.9-25.201 11.6s-8.898 17.3-8.898 28.9c0 11.3 2.899 21 8.699 29s14.099 12 24.699 12c11.1 0 19.6-3.9 25.3-11.8 5.8-7.9 8.7-17.5 8.7-29 0-10.6-2.8-20-8.5-28.2-5.4-8.3-13.699-12.5-24.799-12.5zm-466.5 1.2v79h18.799l-0.599-64.6h12c4.2 0 7.3 0.9 9.4 2.8s3.1 4.4 3.1 7.6c0 2.7-0.899 5.2-2.799 7.3s-1.801 2-6.201 3.2c-3.5 1-5.4 2.1-7 3.4-2.9 2.5-5.599 5.2-6.799 8.8 3.5 1.1 7.698 1.7 11.898 2.1 5 0.2 9.801-0.3 12.401-1 2.7-0.7 5.401-2.1 8.201-4.2s5-5 6.5-8.7 2.299-7.5 2.299-11.4c0-5.6-1.399-10.2-4.299-14.1-2.9-3.8-6.201-6.5-9.901-7.9-3.7-1.5-9-2.3-15.9-2.3zm-361.4 0.1v15.6h19.699v63.4h18.701v-63.4h19.6v-15.6zm66.1 0v79h18.599v-64.9h10.901c4.2 0 7.101 0.2 8.701 0.6 1.5 0.4 2.999 1.4 4.299 3.2 1.3 1.7 2 3.7 2 5.9 0 2.3-0.7 4.4-2 6.2s-2.8 2.9-4.5 3.5c-0.9 0.2-2 0.2-3.7 0.5-1.6 0.3-2.9 0.8-4.4 1.3-1.4 0.7-2.8 1.4-4.1 2.4-3 2.5-4.999 4.9-6.599 8.2 3.6 0.9 7.099 1.5 10.299 1.7 0.8 0 1.5 0 2.3 0.1v0.1l12.2 31.3h20.4l-14.6-34.9c5.6-2.8 11.501-9.1 12.901-14.2 1.6-6.4 0.1-13.8-3.102-19.5-2.1-3.7-5.799-6.7-9.699-8.2s-9-2.3-15.4-2.3zm95.3 0-25.3 79h16.201l5-16.3h24.5c-1.5-4-3.602-7.3-6.102-10.1-3.4-4.2-8.6-4.5-14-4.4l8.401-27.7 17.599 58.5h19.901l-24.7-79zm54.6 0v79h14.4v-47.3c0-0.9 0-2.1-0.201-3.4 0-0.5-0.1-1.4-0.1-2.7l31 53.4h15.8v-79h-14.3v41.3c0 1.2 0.1 3 0.3 5.3l-26.9-46.6zm291.4 0v79h18.6v-64.9h10.9c4.2 0 7.1 0.2 8.7 0.6 1.5 0.4 3 1.4 4.3 3.2 1.3 1.7 2 3.7 2 5.9 0 2.3-0.7 4.4-2 6.2s-2.8 2.9-4.5 3.5c-0.9 0.2-2.001 0.2-3.701 0.5-1.6 0.3-2.898 0.8-4.398 1.3-1.4 0.7-2.802 1.4-4.102 2.4-3 2.5-4.999 4.9-6.599 8.2 3.6 0.9 7.1 1.5 10.3 1.7 0.8 0 1.499 0 2.299 0.1v0.1l12.201 31.3h20.401l-14.602-34.9c8-4.2 13.002-10.1 13.602-18.3 0.4-5.3-0.801-10.8-3.701-15.4-2.5-4-5.8-6.7-9.7-8.2s-9-2.3-15.4-2.3zm71.299 0v15.6h19.701v63.4h18.799v-63.4h19.602v-15.6zm77.901 0-25.299 79h16.199l5-16.3h24.5c-1.5-4-3.6-7.3-6.1-10.1-3.4-4.2-8.6-4.5-14-4.4l8.401-27.7 17.599 58.5h19.901l-24.701-79zm40.599 0v15.6h19.701v63.4h18.799v-63.4h19.602v-15.6zm66.102 0v79h18.5v-79zm110 0v79h14.398v-47.3c0-0.9 0-2.1-0.2-3.4 0-0.5-0.1-1.4-0.1-2.7l31 53.4h15.8v-79h-14.3v41.3c0 1.2 0.1 3 0.3 5.3l-26.899-46.6zm-410.1 13.9c9.4 0 14.102 8.5 14.102 25.6 0 17-4.702 25.6-14.102 25.6-9.7 0-14.599-8.5-14.599-25.6s4.899-25.6 14.599-25.6zm364.6 0c9.4 0 14.099 8.5 14.099 25.6 0 17-4.699 25.6-14.099 25.6-9.7 0-14.602-8.5-14.602-25.6s4.902-25.6 14.602-25.6z" fill="url(#trans-blk-grad)" stroke="url(#trans-blk-grad-stroke)" stroke-width="2.4"/>
+                               <path id="trans-slvr-inset" d="m-10382 124.8c-6.9 0-13.9 1.9-19.2 6.4-7 6.2-10.9 15.3-12 24.4-1.3 10.2-0.1 20.9 4.6 30.1 3.2 6.2 8.2 11.8 14.9 14.3 7.4 2.7 15.7 2.6 23.1 0 5-1.8 9.299-5.3 12.199-9.6 5.7-8 8.001-18.1 7.801-27.8-0.2-10.5-3.5-21.2-10.4-29.2-3-3.5-7.001-6-11.401-7.2-3.1-1.1-6.299-1.4-9.599-1.4zm364.4 0c-7.3 0-14.899 2.3-20.199 7.5-6.6 6.4-10.1 15.5-11 24.6-1.2 10.8 0.598 22.3 6.398 31.6 3.4 5.4 8.402 10.1 14.602 11.9 6.8 2.2 14.2 2 21-0.1 4.9-1.6 9.298-4.8 12.398-9 5.8-7.6 8.3-17.3 8.5-26.7 0.3-11-2.9-22.3-10-30.9-3-3.6-7.099-6.3-11.599-7.6-3.3-1-6.7-1.4-10.1-1.3zm-511.2 0.7c-7.1 0-14.501 2.3-19.401 7.6-5.4 5.9-7 14.7-4.3 22.2 1.2 3.2 3.5 6 6.5 7.6 6.3 3.9 13.7 5.3 20.9 6.9 3.6 0.9 7.299 1.9 10.199 4.3 3.1 2.8 3.801 7.8 1.701 11.4-1.8 3.4-5.401 5.5-9.201 6.1-4.3 0.8-8.8 0.6-13-0.6-4.5-1.5-8.499-4.9-10.099-9.4-3.9 0.8-8.2 1.8-11.7 2.6 2.5 7.3 8.7 13.1 16.2 15.2 7.9 2.5 16.5 2.3 24.5 0.3 6.6-1.8 12.5-6.3 15.4-12.6 2.9-6.1 2.899-13.7-0.801-19.4-3-4.8-8-8.2-13.5-9.5-6.7-2.1-13.9-2.8-20.5-5.4-3.1-1.5-5.4-4.5-5.5-8-0.3-3.7 1.801-7.7 5.401-9.1 4.1-1.9 8.699-1.8 13.099-1.1 4.5 1 8.6 4 10.5 8.2 3.4-1.2 6.901-2.3 10.301-3.5-3.2-7-10-12-17.5-13.2-2.9-0.4-5.999-0.6-9.199-0.6zm193.3 0.5v74.7h14.3v-65c7.5 0.4 15.1-0.6 22.5 0.8 5.2 1.6 8.4 7.4 7.6 12.7-0.6 4.6-3.801 9-8.301 10.1-2.6 0.5-5.399 0.5-7.799 1.9-3.2 1.5-5.9 4-7.8 7 3.5 0.8 7.2 1.2 10.8 1.1 3.9 10.5 8.1 20.9 12.1 31.4 5.5-0.1 10.099 0 15.699 0-4.7-11.3-9.499-22.6-14.199-33.9 5.2-1.9 10.2-5.4 12.6-10.5 3.8-8.5 1.401-19.5-5.799-25.5-3.8-3.1-8.802-4.1-13.602-4.5-3.9-0.4-7.898-0.3-11.898-0.3zm-507.1 0.2c-0.1 3.7-0.1 7.3-0.1 10.9h19.7v63.4h14v-63.4h19.599v-10.9zm361.3 0v74.2h14l-0.602-64.7c6.8 0.4 13.701-0.6 20.401 0.8 4.3 1.2 7.999 4.9 8.599 9.4 1 5.4-1.399 11.5-6.299 14.2-3 1.3-6.501 1.4-9.201 3.4-2.4 1.6-4.5 3.8-6 6.2 7.2 1.6 14.801 2.1 21.901-0.2 6.2-2.2 11.099-7.7 12.599-14.1 1.8-6.2 1.502-13.2-1.898-18.8s-9.5-9.4-16-10c-3.6-0.3-7.201-0.4-10.801-0.4zm217.5 0c-0.1 3.7-0.102 7.3-0.102 10.9h19.701v63.4h14v-63.4h19.6v-10.9zm118.5 0c-0.1 3.7-0.102 7.3-0.102 10.9h19.701v63.4h14v-63.4h19.6v-10.9zm-599.85 0.075c-0.975 0-1.949 0.026-2.949 0.026h-28.5v74.2h13.9v-65c7.6 0.4 15.401-0.6 22.901 0.9 5.4 1.8 8.599 7.9 7.599 13.4-0.7 4.6-4.101 8.9-8.701 10-2.7 0.4-5.498 0.6-7.898 2-2.9 1.4-5.401 3.698-7.201 6.398 3.5 0.7 6.999 1.2 10.599 1 3.9 10.5 8.102 20.9 12.102 31.4h15.199c-4.7-11.3-9.4-22.498-14.1-33.798 5.2-1.8 10.2-5.3 12.6-10.4 4-8.7 1.3-20.1-6.4-25.9-4.7-3.3-10.7-3.9-16.2-4.1-1-0.1-1.976-0.126-2.951-0.126zm63.352 0.026c-8 24.7-15.901 49.4-23.901 74.2h11.2c1.7-5.4 3.3-10.802 5-16.302 7.5 0 14.999 0 22.599-0.1-1.8-3.4-3.999-6.899-7.599-8.699-3.2-1.3-6.7-0.9-10.1-1.2-1.3-0.5-1.501-2.3-0.801-3.3 3.5-11.7 7.102-23.3 10.602-34.9 6.4 21.5 12.899 43 19.299 64.5h14.9c-7.7-24.7-15.499-49.5-23.199-74.2zm101.7 0c0.1 14.4-0.299 28.7 0.301 43.1 0.2 3.1 0.198 6.099-0.102 9.199-9.3-15-17.799-30.6-26.799-45.8-1.2-2.1-2.501-4.3-3.701-6.4h-16.199v74.1h9.6c-0.1-16.1 0.3-32.2-0.2-48.2-0.3-3.7-0.1-7.3 0.2-11 11.5 19.7 22.9 39.5 34.4 59.2h12v-74.2zm393.5 0c-8 24.7-16 49.4-23.9 74.2h11.201c1.7-5.4 3.3-10.802 5-16.302 7.5 0 14.999 0 22.599-0.1-1.7-3.3-3.9-6.799-7.4-8.599-3.2-1.4-6.901-1-10.301-1.3-1.3-0.5-1.499-2.3-0.799-3.3 3.5-11.7 7.1-23.3 10.6-34.9 6.4 21.5 12.901 43 19.301 64.5h14.898c-7.7-24.7-15.499-49.5-23.199-74.2zm107.2 0v74.2h13.701v-74.2zm156.5 0c0.1 14.4-0.3 28.7 0.3 43.1 0.2 3.1 0.201 6.099-0.1 9.199-9.3-15-17.8-30.5-26.7-45.7-1.3-2.2-2.5-4.3-3.8-6.5h-16.2v74.1h9.601c-0.1-16.1 0.3-32.2-0.2-48.2-0.3-3.7-0.1-7.3 0.2-11 11.5 19.7 22.899 39.5 34.399 59.2h12v-74.2zm-458.9 9.299c5.6-0.2 10.9 3.6 13 8.8 2.9 6.1 3.099 13 3.199 19.6 0 6.6-0.699 13.5-3.699 19.5-1.9 3.7-5.402 6.7-9.602 7.4-5.6 1.2-11.999-1.1-15.099-6-3.4-5.1-4.2-11.3-4.5-17.2-0.4-7.6-0.1-15.4 2.8-22.5 1.7-4 4.999-7.7 9.299-8.9 1.5-0.5 3.102-0.7 4.602-0.7zm365 0c5.5 0 10.599 3.7 12.599 8.8 2.9 6.1 3.1 13 3.2 19.6 0 6.6-0.7 13.5-3.7 19.5-1.9 3.7-5.399 6.7-9.599 7.4-5.6 1.2-11.9-1.1-15-6-3.4-5-4.302-11.2-4.602-17.1-0.4-7.6-0.1-15.4 2.701-22.6 1.7-4 4.999-7.7 9.299-8.9 1.7-0.5 3.402-0.7 5.102-0.7z"  fill="url(#linearGradient4569)"/>
+                    </g>
+                    <g id="resolute" transform="translate(5449 -55.826)">
+                     <linearGradient id="res-slvr-grad" x1="-4573.6" x2="-4458.8" y1="-509" y2="-509" gradientTransform="translate(0 679.06)" gradientUnits="userSpaceOnUse" spreadMethod="repeat">
+                      <stop stop-color="#696969" offset="0"/>
+                      <stop stop-color="#c7c7c9" offset=".222"/>
+                      <stop stop-color="#f9f9ff" offset=".451"/>
+                      <stop stop-color="#ccccce" offset=".804"/>
+                      <stop stop-color="#696969" offset="1"/>
+                     </linearGradient>
+                     <linearGradient id="res-blk-grad" x1="7487.1" x2="7487.1" y1="287.08" y2="-952.32" gradientTransform="matrix(.1109 0 0 -.1109 -5347 140.5)" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#141414" offset="0"/>
+                      <stop stop-color="#0a0a0a" offset=".15"/>
+                      <stop stop-color="#6d6d6d" offset=".3"/>
+                      <stop offset=".44"/>
+                      <stop stop-color="#141414" offset=".62"/>
+                      <stop stop-color="#262626" offset=".75"/>
+                      <stop stop-color="#040404" offset="1"/>
+                     </linearGradient>
+                     <linearGradient id="path4980-5-3_1_" x1="-4820.1" x2="-4820.1" y1="1115.2" y2="1237.2" gradientTransform="matrix(1.153 0 0 1.153 219.57 -1859.8)" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#141414" offset="0"/>
+                      <stop stop-color="#0a0a0a" offset=".15"/>
+                      <stop stop-color="#6d6d6d" offset=".3"/>
+                      <stop offset=".44"/>
+                      <stop stop-color="#141414" offset=".62"/>
+                      <stop stop-color="#262626" offset=".75"/>
+                      <stop stop-color="#040404" offset="1"/>
+                     </linearGradient>
+                     <path id="res-purp-slvr" d="m-5332.4 99.256-66.4 0.2v151.1h35.7v-124.2h20.9c8.1 0 13.7 0.4 16.6 1.2 2.9 0.7 5.7 2.8 8.2 6.1s3.8 7.1 3.8 11.3c0 4.4-1.3 8.4-3.8 11.9-2.5 3.4-5.4 5.6-8.6 6.6-1.8 0.4-3.9 0.3-7.1 0.9-3 0.6-5.6 1.5-8.4 2.5-2.8 1.3-5.3 2.7-7.8 4.5-5.8 4.9-9.5 9.4-12.5 15.7 6.9 1.7 13.5 2.8 19.7 3.3 1.5 0.1 2.9 0.1 4.3 0.1v0.1l23.2 59.9h39.1l-27.9-66.8c8.7-4.4 16.2-9.7 20.9-17.6 4.5-7.6 5.8-17.2 5.2-26-0.5-7.4-3-14.9-7.1-20.9-4.5-6.7-11-12.8-18.5-15.6-7.4-2.9-17.2-4.3-29.5-4.3zm234.2 0.2c-16.3 0-29.2 4.5-38.7 13.4-9.5 9-14.2 20-14.2 33 0 12.9 4 22.7 11.9 29.4 8 6.7 21.3 11.9 40 15.8 10 2.1 16.8 4.3 20.3 6.7s5.3 5.7 5.3 10-1.9 7.9-5.8 11c-3.9 3-9.7 4.5-17.6 4.5-16.4 0-26.3-6.8-29.9-20.5l-31.8 7.2c3.3 13.5 10.3 23.6 20.8 30.5 10.6 6.8 23.5 10.2 38.5 10.2 20 0 35.1-4.8 45.3-14.5 10.3-9.7 15.4-21.2 15.4-34.4 0-8.5-2.4-16.1-7.2-22.9-4.7-6.8-10.5-11.8-17.5-14.9-7-3-17.9-6.1-32.9-9.1-9-1.8-14.7-3.9-17.3-6.3-2.5-2.4-3.8-5.4-3.8-8.9 0-8.8 6.8-13.2 20.4-13.2 12.7 0 21.1 5.8 25 17.4l29.2-9.8c-8.2-23-26.8-34.5-55.4-34.6zm129.3 0.1c-20.3 0-35.9 7.2-46.8 21.5-11 14.3-16.4 32.2-16.4 53.6 0 21.1 5.4 39 16.2 53.8s26.1 22.2 45.9 22.2c20.6 0 36.3-7.3 47-21.9s16.1-32.5 16.1-53.8c0-19.7-5.2-37.2-15.7-52.4-10.4-15.3-25.8-23-46.3-23zm68.3 2.3v146.6h93.1v-29h-58.3v-117.6zm218.1 0v29h36.5v117.6h34.8v-117.6h36.3v-29zm-122.4 0.1v91.3c0 14.7 2 26 6.2 33.6s10.4 13.5 18.7 17.7c8.3 4.1 19.6 6.2 33.7 6.2s25.7-2.3 34.7-6.9c9.1-4.6 15.3-10.5 18.7-17.7 3.3-7.3 5-18.2 5-33v-91.2h-29.4v91.3c0 8.3-0.6 14.2-2 17.8-1.3 3.5-4 6.3-8.1 8.5-4 2.1-9.3 3.2-15.7 3.2-5.8 0-10.7-1-14.7-3.2-3.9-2.2-6.5-5.2-7.9-8.9-1.3-3.7-1.9-9.5-1.9-17.4v-91.3zm-464.4 2.1v146.6h104.8v-29h-69.9v-89.7h69.9v-27.9zm699.8 0v146.6h104.8v-29h-69.9v-89.7h69.9v-27.9zm-399.6 23.5c17.5 0 26.2 15.9 26.2 47.6 0 31.6-8.7 47.5-26.2 47.5-18 0-27.1-15.9-27.1-47.6 0-31.6 9-47.5 27.1-47.5zm-229.6 34.3c-9.5 0-16.8 2.8-22.1 8.3-5 5.3-8.9 11.7-11.8 19.3h68.2v-27.6zm699.8 0c-9.5 0-16.8 2.8-22.1 8.3-5 5.3-8.9 11.7-11.8 19.3h68.2v-27.6z" fill="#340055" stroke="url(#res-slvr-grad)" stroke-miterlimit="10" stroke-width="2"/>
+                     <path id="res-blk" d="m-5372.4 103.74c-6.697 0-13.371 0.02-19.871 0.02h-1.701c-0.2 47.3-0.1 94.9-0.1 142.2h26.4v-124.4c16.4 0.3 32.7-2.8 47.7 3.4 15 8.7 14.3 33.7-1.3 41.4-8.3 3.6-18.2 2-25.2 8.8-3.2 2.4-5.9 5.5-8.2 8.8 6.8 1.4 13.5 2.2 20.5 2 6.8 20.3 15.199 39.9 22.799 60h29c-9-21.5-18-43.1-27-64.6 16.3-4.9 29.401-20.7 27.701-38.2-0.3-18.4-14.5-36.2-34-37.9-16.35-1.35-36.638-1.52-56.728-1.52zm275.05 0.262a71.75 71.75 0 0 0-6.02 0.258c-21.1 0.4-42.4 16.5-43.1 38.7-1.6 13.9 5.202 29 18.702 34.5 16.4 8.8 36.3 8 52.5 17.3 10.1 7.8 6.9 25.5-5 29.8-12.5 5.7-28.3 4.5-39.8-2.9-4.5-3.4-8-8.1-10-13.3-7.5 2-16.202 3-22.802 5.6 6.6 20.7 29.001 32.3 49.801 32.1 19.8 1.5 42.5-4.4 53.5-22.1 11.7-17.2 6.5-43.7-12.1-53.6-16.5-9.9-37.2-8-53.9-17.2-9.8-7.2-8-25.4 4.2-28.9 14.8-5.9 35.7-1.7 42.2 14.2 6.4-3.4 13.6-4.7 20.4-7.1-7.793-19.394-28.974-27.372-48.581-27.358zm124.5 0.129c-21.49 0.19-41.046 15.178-48.215 35.328-10.7 26.7-8.6 58.6 6.6 83.3 9.6 15.3 27.5 24.401 45.5 23.401 19.5 0.2 39.1-10.3 47.3-28.4 14.1-26.6 13.5-60.4-1.2-87.2-8.1-15.2-23.8-26.2-41.3-26.3-2.2-0.1-4.4-0.1-6.6-0.1a46.73 46.73 0 0 0-2.085-0.029zm260.19 2.03-0.1 7.5c-0.3 31.3 1.099 62.7-0.801 94-1.9 11.6-13.3 18.998-24.5 19.298-12.5 1.7-28.8-2.798-32.3-16.398-4.2-17.4-0.7-35.501-1.9-53.201v-50.9h-28c-0.1 28.9-0.1 57.8-0.1 86.6-0.8 17.4 3.8 38.7 21.3 46.6 18.3 8.7 39.4 7.7 58.7 2.8 14.2-4.3 26.8-16.8 26.7-32.3 2.7-30.2 1.3-59.9 1.3-91 0.1-3.5 0-12.9 0-12.9zm34.798 0.199v19.8h36.5v117.6h25.602v-117.6h36.299l0.1-19.8zm-218.1 0.1v137.4h83.901l0.1-19.8h-58.4v-117.6zm331.1 2.2v137.4h95.602l0.1-19.8h-70v-98.9h69.9s-0.1-18.7 0-18.7zm-699.8 0.1v137.3l95.699-0.1-0.1-19.6c-23.3-0.1-46.6 0-69.9 0v-98.9h69.9v-18.7zm295.24 14.135c0.518 6e-3 1.036 0.027 1.554 0.064 16 0 26.501 16.002 27.801 30.602 3.3 19.7 3.2 41-5.2 59.5-7.4 14.7-28.6 19.098-41.1 8.298-13.3-11.1-13.7-29.898-14.5-45.798 0.4-14.8 1.3-31.4 11-43.4 5.062-5.907 12.674-9.353 20.445-9.266zm-199.54 43.465c-6.6 0.1-16.5 0.1-23 0.1-12.5-0.2-22 1.1-28.4 10.1-1.7 2.4-4.9 6.1-4.8 8.2 18.7-1 37.5 0.5 56.2 0zm676.8 0.1c-11.3-0.1-22.2 1.2-28.6 10.3-1.8 2.5-4.4 6.2-5.1 8.5 18.8-0.9 37.8-0.1 56.6-0.4v-18.4z" fill="url(#res-blk-grad)"/>
+                    </g>
+                   </svg>
+            </a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+              <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarResponsive">
+              <ul class="navbar-nav ml-auto">
+                  <li class="invisible">
+                      <a href="#page-top"></a>
+                  </li> 
+            <li class="nav-item">
+                  <a class="nav-link" data-scroll href="#About"><h4>About</h4>
+                    <span class="sr-only">(current)</span> 
+                  </a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" data-scroll href="#Services"><h4>Services</h4></a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" data-scroll href="#Fleet"><h4>Fleet</h4></a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-scroll href="#tools"><h4>Tools</h4></a>
+                  </li>
+                <li class="nav-item">
+                  <a class="nav-link" data-scroll href="#Contact"><h4>Contact</h4></a>
+                </li>
+              <li class="nav-item">
+                   <button type="button" class="btn btn-dark" onclick="window.location.href='https://reservations.resolutelimo.com/default';"><h4>Book Now</h4></button>
+                  </li>
+  
+              </ul>
+            </div>
+          </div>
+        </nav> 
+                     <!--INTRO SECTION-->
+
+      <div id="intro">
+
+          <!-- <div class="intro-body"> -->
+               <div class="container-fluid">
+                        <div class="row">
+                            <div class="col-sm-2"></div>
+                            <div class="col-sm-8 mt-5">
+                                <samp><h1 class="text-center animated fadeInDownBig font-weight-bold">resolute (adjective) [res·o·lute \ˈre-zə-ˌlüt, -lət\]
+                                </h1></samp>
+                            </div>
+                            <div class="col-sm-2"></div>
+
+                        </div>
+                        <div class="row">
+ 
+                            <div class="col-sm-4 mt-5">
+                                   
+                                    <samp><h3 class="aboutBox animated fadeInUpBig font-weight-bold">1: marked by firm determination; resolved (a resolute character)</h3></samp>
+                            </div>
+                                <div class="col-sm-8 mt-5"></div> 
+                        </div>
+                        <div class="row mb-2">
+                                <!-- <div class="col-sm-7 "></div> -->
+
+                            <div class="col">
+                                                   <div id="animation_container"> 
+                                                      <canvas id="canvas" ></canvas>
+                                                      <div id="dom_overlay_container">
+                                                      </div>
+                                                  </div>
+                                                    
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-1"></div>
+                            <div class="col-sm-5">
+                                    <samp><h3 class="aboutBox animated fadeInRightBig font-weight-bold">2: bold, steady, unwaivering (a resolute purpose)</h3></samp>
+                          </div>
+                          <div class="col-sm-3"></div>
+                            <div class="col-sm-2">
+                                                  <button class="btn btn-dark" onclick="window.location.href='#About'">
+                                                      <!-- <a href="#About" role="button"> -->
+                                                          <h4>Learn More</h4>
+                                                        <!-- </a> -->
+                                                    </button>
+                                                </div>
+                                                <div class="col-sm-1"></div>
+
+                                            </div>
+                           
+<!--                         <div class="row">
+
+
+                      <div class="col-sm-7 mt-5"></div> 
+
+                        </div> 
+ -->                    </div> 
+<!--                  <div class="container-fluid intro-end">
+</div> 
+ --> 
+      </div> 
+      <!--ABOUT SECTION-->
+      <div id="About" data-enllax-ratio=".1" data-enllax-type="background" >
+          <div class="container">
+<!--            <div class="row">
+                <div class="col-sm-6 mb-5">
+                    </div>
+                    <div class="col-sm-6 mb-5">
+              <div class="text-center">
+                  <h1> </h1>
+                  </div>    
+              </div>
+            </div>-->
+ <div class="row">
+    <div class="col-sm-6">
+            <img src="img/IMG_8106.png" class="img-fluid rounded shadow" data-enllax-ratio="3" data-enllax-type="foreground" data-enllax-direction="horizontal">
+        </div>
+        <div class="col-sm-6">              
+            <div class="display-2 center">
+            <h2>Experience Excellence</h2>
+            <hr>
+        </div>
+</div>
+    </div>
+                      <!-- </div> -->
+<!--                   <div class="col-sm-3">
+                          <h4>What We Do</h6>
+                          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis sed dapibus leo nec ornare diam. Sed commodo nibh ante facilisis bibendum dolor feugiat at. Duis sed dapibus leo nec ornare diam.</p>
+                          <ul>
+                              <li>Lorem ipsum dolor sit amet</li>
+                              <li>Consectetur adipiscing commodo</li>
+                              <li>Duis sed dapibus leo sed dapibus</li>
+                              <li>Sed commodo nibh ante bibendum</li>
+                          </ul>
+                      </div>
+ -->                  </div>
+              </div>
+  <!--SERVICES SECTION-->
+      <div id="Services" class="text-center"  data-enllax-ratio="-.7" data-enllax-type="background">
+          <div class="container">
+              <div class="display-2 center">
+                  <h2>Experience Excellence</h2>
+                  <hr>
+              </div>
+              <div class="space"></div>
+              <div class="row">
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <img src="img/services icons/personal.png" />
+                          <h3>Personalized Individual Ground Transportation</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque etiam.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!-- <i class="fa fa-cogs"></i>-->
+                          <img src="img/services icons/groups.png" />
+                          <h3>Groups and Special Events</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!--<i class="fa fa-tablet"></i>-->
+                          <img src="img/services icons/greet.png" />
+                          <h3>Airport Concierge</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque etiam.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!--  <i class="fa fa-html5"></i>-->
+                          <img src="img/services icons/chauffeurs.png" />
+                          <h3>Veteran Chauffeurs</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque.</p>
+                      </div>
+                  </div>
+              </div>
+              <!--<div class="space"></div>-->
+              <div class="row">
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!--<i class="fa fa-wordpress"></i>-->
+                          <img src="img/Add-Shield.png" />
+                          <h3>VIP Security</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque etiam.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!--<i class="fa fa-bullhorn"></i>-->
+                          <img src="img/services icons/travel.png" />
+                          <h3>Travel Departments</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!-- <i class="fa fa-rocket"></i>-->
+                          <img src="img/services icons/onsite.png" />
+                          <h3>On Site Staffing</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque etiam.</p>
+                      </div>
+                  </div>
+                  <div class="col-md-3 col-sm-6">
+                      <div class="service">
+                          <!--   <i class="fa fa-leaf"></i>-->
+                          <img src="img/services icons/specialists.png" />
+                          <h3>Transportation Specialists</h3>
+                          <p>Lorem ipsum dolor sit amet placerat facilisis felis mi in tempus eleifend pellentesque natoque.</p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+      <!--FLEET SECTION-->
+      <div id="Fleet">
+          <div class="container">
+              <!-- Container -->
+              <div class="section-title text-center center">
+                  <h1>Our Fleet</h1>
+                  <hr>
+                  <h4>Resolute Transportation provides our clients with access to a fleet of late-model, luxury vehicles in all major markets worldwide. Pictured here are the vehicles which comprise our standard North American offerings. For details on specialty vehicles ("limo-style" Jet Sprinters, hybrid/electric vehicles, tour buses, etc.) and vehicles in Europe, Asia and other markets outside North America, click <a href="vehicles.htm">here</a>.</h4>
+              </div>
+              <div class="container">
+              <div class="row">
+                <div class="col-md-4">
+                    <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/01s.jpg" rel="prettyPhoto" alt="Cadillac XTS" class="border-bottom">
+                                      <div class="hover-text">
+                                          <h4>Cadillac XTS</h4>
+                                          <p>2 Passenger Sedan</p>
+                                      </div>
+                                      <img src="img/fleet/01.png" class="img-thumbnail" >
+                                  </a>
+                              </div>
+                          </div>
+                      </div>
+                      <div class="col-md-4">
+                        <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/02s.jpg" alt="Mercedes s560" rel="prettyPhoto">
+                                      <div class="hover-text">
+                                          <h4>Mercedes s560</h4>
+                                          <p>2 Passenger Sedan</p>
+                                      </div>
+                                      <img src="img/fleet/02.png" class="img-thumbnail" >
+                                  </a>
+                              </div>
+                          </div> 
+                      </div>
+                      <div class="col-md-4">
+                        <div class="portfolio-item">
+                            <div class="hover-bg">
+                                <a href="img/fleet/04s.jpg" alt="Lincoln Continental" rel="prettyPhoto">
+                                    <div class="hover-text">
+                                        <h4>Lincoln Continental</h4>
+                                        <p>3 Passenger Sedan</p>
+                                    </div>
+                                    <img src="img/fleet/04.png" class="img-thumbnail" >
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-4">
+                        <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/03s.png" alt="Escalade ESV" rel="prettyPhoto">
+                                      <div class="hover-text">
+                                          <h4>Cadillac Escalade ESV</h4>
+                                          <p>6 Passenger SUV</p>
+                                      </div>
+                                      <img src="img/fleet/03.png" class="img-thumbnail" >
+                                  </a>
+                              </div>
+                          </div>
+                      </div>   
+                      <div class="col-md-4">
+                        <div class="portfolio-item">
+                            <div class="hover-bg">
+                                <a href="img/fleet/08s.png" alt="Lincoln Navigator" rel="prettyPhoto">
+                                    <div class="hover-text">
+                                        <h4>Lincoln Navigator</h4>
+                                        <p>7 Passenger SUV</p>
+                                    </div>
+                                    <img src="img/fleet/08.png" class="img-thumbnail" >
+                                </a>
+                            </div>
+                        </div>
+                    </div>                                     
+                      <div class="col-md-4">
+                        <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/06s.png" alt="Mercedes Sprinter" rel="prettyPhoto">
+                                      <div class="hover-text">
+                                          <h4>Mercedes Sprinter</h4>
+                                          <p>10-14 Passenger Van</p>
+                                      </div>
+                                      <img src="img/old_fleet/06.png" class="img-thumbnail" >
+                                  </a>
+                              </div>
+                          </div>
+                      </div>                    
+                      <div class="col-md-4">
+                          <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/07s.png"  alt="Freightliner Minicoach" rel="prettyPhoto">
+                                      <div class="hover-text">
+                                          <h4>Freightliner</h4>
+                                          <p>38 Passenger Minicoach</p>
+                                      </div>
+                                      <img src="img/fleet/07.png" class="img-thumbnail">
+                                  </a>
+                              </div>
+                          </div>
+                      </div>
+                      <div class="col-md-4">
+                        <div class="portfolio-item">
+                              <div class="hover-bg">
+                                  <a href="img/fleet/05s.png" alt="Irizar Motorcoach" rel="prettyPhoto">
+                                      <div class="hover-text">
+                                          <h4>Irizar Motorcoach</h4>
+                                          <p>56 Passenger Bus</p>
+                                      </div>
+                                      <img src="img/fleet/05.png" class="img-thumbnail" >
+                                  </a>
+                              </div>
+                          </div>
+                      </div>  
+                    </div>
+                  </div>
+              </div>
+          </div>
+              <!-- Tools Section -->
+    <div id="tools" >
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-sm-2"></div>
+                <div class="col-sm-8">
+            <div class="text-center align-items-start">
+                <h2 class="display-4">Booking Tools</h2>
+                <hr>
+            </div>
+        </div>
+        <div class="col-sm-2"></div>
+
+        </div>
+<!--
+    Travel Agent and Travel Management Company tools and integrations.
+    Sabre
+    Groundspan
+    Saturn
+    Concur
+    Global Delivery System
+
+    Traveler Tools
+    iPhone and Android apps
+    Online Reservations and Account Management
+    Schedule New Reservations
+    Make changes
+    Track vehicle
+    Access receipts
+    Automated trip status updates.
+    24-hour confirmation and driver assignment notification
+Automated address verifications using Google API
+Real-time GPS tracking
+Autogenerate custom billing and reports
+-->
+
+
+<!--             <div class="row align-items-center mt-5">
+                <div class="col-sm-1"></div>
+                <div class="col-md-3 mt-5">                    
+ -->                        
+ <div class="card-deck">
+        <div class="card border-light border-bottom bg-dark mx-4 ">
+                <div class="card-body ">
+                            <h2 class="mb-5 card-title">We work with all travel agency booking tools, including:</h2>
+
+                                <ul class="card-text list-group bg-dark text-left mt-5">
+                                        <li class="list-group-item bg-dark rounded"><h2>Saturn</h2></li>
+                                        <li class="list-group-item bg-dark"><h2>Sabre</h2></li>
+                                        <li class="list-group-item bg-dark"><h2>GroundSpan</h2></li>
+                                        <li class="list-group-item bg-dark"><h2>Concur</h2></li>
+                                        <li class="list-group-item bg-dark"><h2></h2></li>
+                                    </ul>
+
+                              </div>
+                              </div>    
+               <!--  <div class="col-sm-1"></div>
+
+                        <div class="col-md-3 mt-5"> -->
+                                <div class="card">
+                                        <div class="card-body border-left border-bottom">
+                                                <h2 class="mb-5 card-title text-center">Using our phone app or online booking tools, any client can:</h2>
+                                                <ul class="card-text list-group text-center mt-5">
+                                                        <li><h2>Schedule New Reservations</h2></li>
+                                        <li><h2>Track Your Vehicle</h2></li>
+                                        <li><h2>Make Changes</h2></li>
+                                        <li><h2>Obtain Receipts</h2></li>
+                                        <li><h2></h2></li>
+                                    </ul>
+</div>  
+            </div>
+          <!-- </div> -->
+          <!-- <div class="col-sm-1"></div> -->
+
+                                <!-- <div class="col-md-3 mt-5"> -->
+                                        <div class="card">
+                                    <!-- <div class="text-center justify-content-between"> -->
+                                        <!-- <img class="img-fluid tool-icn" src="img/tools/Android_Robot.svg"> 
+                                              <div class="w-100">    
+                                              </div>-->
+                                              <div class="card-body border-left border-bottom">
+                                                    <h2 class="mb-5 card-title text-center">Click here to download the Resolute Transportation iPhone or Android app, or to access the online account log-in screen:</h2>
+                                                    <!--  <div class="mt-3 mb-3"><h5 class="text-center">Also for Android devices</h5>
+                                              </div> -->
+                                              <ul class="card-text list-group text-right mt-5">
+                                                    <li class="list-group-item">
+                                              <img class="img-fluid store-badge" src="img/tools/Download_on_the_App_Store_Badge_US-UK_RGB_blk_092917.svg"> </li>
+                                              <li class="list-group-item">
+                                              <img class="img-fluid store-badge mt-5" src="img/tools/web_tools.svg"> </li>
+                                              <li class="list-group-item">
+                                              <img class="img-fluid store-badge mt-5" src="img/tools/google play badge.svg"> </li>
+                                              </ul>
+                                               </div>
+                                               </div>
+                                            </div>
+                                                                  </div>
+                                                                </div>
+                                                                <!-- </div> -->
+
+                        <!-- </div>  -->
+      <!-- Contact Section --> 
+      <div id="Contact" >
+          <div class="container">
+
+                <div class="row text-center">
+<div class="col-sm-3"></div>
+              <div class="col-sm-6 section-title text-center">
+                  <h2 class="display-4 font-weight-bold">Contact Us</h2>
+                  <hr>
+              </div>
+              <div class="col-sm-3"></div>
+
+                </div>
+
+                <div class="row text-center">
+                    <div class="col-sm-4"></div>
+                <div class="col-md-4 align-middle">
+                    <canvas id='rotatingGlobe' width='400' height='400'
+                              style='width: 300px; height: 300px;'></canvas>
+
+                            </div>
+                              <div class="col-sm-4"></div>
+                            </div>
+
+                            <div class="row text-center">
+                                <div class="col-sm-1"></div>
+                                <div class="col-sm-10">
+                            <p class="text-center">Contact our 24-hour Central Reservations and Dispatch Office at:</p>
+                                </div>
+                                <div class="col-sm-1"></div>
+
+                            </div>
+                <div class="row text-center">
+                        <div class="col-sm-3"></div>
+                    <div class="col-sm-3">
+                        <div class="contact-item">                               
+                          <h4><a href="mailto:myres@resolutelimo.com"><img class="img-fluid" src="../img/mail.svg" alt="email button"><br/>myres@resolutelimo.com</a>
+                          </h4>
+                      </div>
+                  </div>
+                  <div class="col-sm-3">
+                    <div class="contact-item">
+                        <h3>
+                            <a href="tel:8187861326"><img class="img-fluid" src="../img/phone.svg" alt="phone button"><br/>818-786-1326</a>
+                        </h3>
+                    </div>
+                </div>
+                <div class="col-sm-3"></div>
+
+                </div>
+                
+              <div class="row">
+<div class="col-sm-1"></div>
+                     <div class="col-md-3">
+                        <div class="contact-item">
+                          <p>
+                              <a href="mailto:sales@resolutelimo.com">Email<br/>sales@resolutelimo.com</a>
+                          </p>
+                      </div>
+                  </div>
+                  
+
+                  <div class="col-md-3">
+                      <div class="contact-item">
+                          <p>
+                              <a href="tel:8187861326">818-786-1326</a>
+                              <br> <a href="tel:8773942660">877-394-2660</a>
+                          </p>
+                      </div>
+                  </div>
+                  <div class="col-sm-1"></div>
+
+                  <!-- <div class="clearfix"></div> -->
+              </div>
+<!--               <div class="hugespace"></div>
+              <div class="bigspace"></div>
+ -->          
+</di            v>
+      </div>
+      <div id="footer" class="bg-dark">
+              <p>Copyright &copy; Resolute Transportation 2019</p>
+          </div>
+
+          
+
+    <!-- Optional JavaScript -->
+    <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+    <script src="node_modules/jquery/dist/jquery.js"></script>
+    <script src="js/jquery.prettyPhoto.js" type="text/javascript" charset="utf-8"></script>
+    <script src="node_modules/popper.js/dist/umd/popper.js"></script>
+    <script src="node_modules/bootstrap/dist/js/bootstrap.js"></script>
+    <script src="js/smooth-scroll.polyfills.min.js"></script>
+    <script src="js/jquery.enllax.js"></script> 
+    <script src="js/planet.js"></script>
+
+    <script src="js/main.js"></script>
+
+    <script>
+            var scroll = new SmoothScroll('[data-scroll]', {
+            easing: 'easeInOutCubic'});
+        </script>
+    <!-- <script>
+
+            (function($){
+                
+                //Plugin activation
+                $(window).enllax();
+                
+    //            $('#some-id').enllax();
+                
+    //            $('selector').enllax({
+    //                type: 'background', // 'foreground'
+    //                ratio: 0.5,
+    //                direction: 'vertical' // 'horizontal'
+    //            });
+                
+            })(jQuery); -->
+
+  </body>
+</html>
